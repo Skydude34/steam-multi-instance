@@ -25,7 +25,10 @@ public sealed class MobileAuthFile
 
     public sealed class SessionData
     {
+        // Реальные .maFile (Steam Desktop Authenticator) отдают SteamID как
+        // JSON-строку, а не число — отсюда AllowReadingFromString.
         [JsonPropertyName("SteamID")]
+        [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
         public long SteamId { get; set; }
     }
 }
