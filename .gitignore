@@ -1,0 +1,22 @@
+# C++ / CMake
+injector/build/
+*.obj
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# .NET
+launcher/bin/
+launcher/obj/
+*.user
+
+# vcpkg
+vcpkg_installed/
+
+# IDE
+.vs/
+.vscode/
+*.suo

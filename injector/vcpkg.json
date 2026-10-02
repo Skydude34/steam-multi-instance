@@ -1,0 +1,7 @@
+{
+  "name": "steam-multi-instance-injector",
+  "version": "0.1.0",
+  "dependencies": [
+    "minhook"
+  ]
+}
