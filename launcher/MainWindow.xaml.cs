@@ -66,7 +66,14 @@ public partial class MainWindow : Window
 
     private void RefreshList()
     {
-        InstancesList.ItemsSource = _manager.Instances
+        // ItemsSource пересоздаётся каждую секунду (таймер обновления Steam
+        // Guard кода), поэтому WPF теряет выделение строки — иначе кнопки
+        // "Скопировать код"/"Завершить выбранный" молча ничего не делают.
+        // Запоминаем ID выбранной строки и восстанавливаем выделение после
+        // переприсвоения ItemsSource.
+        string? selectedInstanceId = (InstancesList.SelectedItem as InstanceRow)?.InstanceId;
+
+        var rows = _manager.Instances
             .Select(i => new InstanceRow
             {
                 InstanceId = i.InstanceId,
@@ -76,6 +83,13 @@ public partial class MainWindow : Window
                 SteamGuardCode = _mobileAuthStore.GetCurrentCode(i.InstanceId) ?? "—",
             })
             .ToList();
+
+        InstancesList.ItemsSource = rows;
+
+        if (selectedInstanceId is not null)
+        {
+            InstancesList.SelectedItem = rows.FirstOrDefault(r => r.InstanceId == selectedInstanceId);
+        }
     }
 
     private void OnCopyCodeClicked(object sender, RoutedEventArgs e)
