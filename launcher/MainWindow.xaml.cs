@@ -1,3 +1,5 @@
+using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
 using SteamMultiInstance.Launcher.SteamGuard;
@@ -8,12 +10,23 @@ public partial class MainWindow : Window
 {
     private readonly InstanceManager _manager = new();
     private readonly MobileAuthStore _mobileAuthStore = new();
+    private readonly AccountStore _accountStore = new();
     private readonly DispatcherTimer _codeRefreshTimer;
 
     public MainWindow()
     {
         InitializeComponent();
         RefreshList();
+
+        // Выбор строки в списке подставляет её ID в поле запуска — чтобы
+        // не перепечатывать руками логин уже известного аккаунта.
+        InstancesList.SelectionChanged += (_, _) =>
+        {
+            if (InstancesList.SelectedItem is InstanceRow row)
+            {
+                InstanceIdBox.Text = row.InstanceId;
+            }
+        };
 
         // Steam Guard код живёт 30 секунд — обновляем список каждую секунду,
         // чтобы в таблице всегда был актуальный код, а не протухший.
@@ -73,16 +86,46 @@ public partial class MainWindow : Window
         // переприсвоения ItemsSource.
         string? selectedInstanceId = (InstancesList.SelectedItem as InstanceRow)?.InstanceId;
 
-        var rows = _manager.Instances
-            .Select(i => new InstanceRow
+        // Список показывает не только СЕЙЧАС запущенные инстансы (их знает
+        // только InstanceManager, и это забывается при перезапуске GUI), а
+        // объединение: сохранённые аккаунты (AccountStore) + все .maFile на
+        // диске + реально работающие боксы — чтобы один раз добавленный
+        // аккаунт всегда был виден в списке и его можно было выбрать и
+        // запустить, не вводя ID заново.
+        var knownIds = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var account in _accountStore.LoadAll())
+        {
+            knownIds.Add(account.Login);
+        }
+
+        if (Directory.Exists(_mobileAuthStore.MaFilesDirectory))
+        {
+            foreach (string file in Directory.GetFiles(_mobileAuthStore.MaFilesDirectory, "*.maFile"))
             {
-                InstanceId = i.InstanceId,
-                Pid = i.Pid,
-                IsRunning = i.IsRunning,
-                ProfileDirectory = i.ProfileDirectory,
-                SteamGuardCode = _mobileAuthStore.GetCurrentCode(i.InstanceId) ?? "—",
-            })
-            .ToList();
+                knownIds.Add(Path.GetFileNameWithoutExtension(file));
+            }
+        }
+
+        var runningById = _manager.Instances.ToDictionary(i => i.InstanceId, StringComparer.OrdinalIgnoreCase);
+        foreach (string runningId in runningById.Keys)
+        {
+            knownIds.Add(runningId);
+        }
+
+        var rows = knownIds.Select(id =>
+        {
+            bool isRunning = runningById.TryGetValue(id, out var instance);
+            return new InstanceRow
+            {
+                InstanceId = id,
+                Pid = isRunning ? instance!.Pid : -1,
+                IsRunning = isRunning && instance!.IsRunning,
+                ProfileDirectory = isRunning ? instance!.ProfileDirectory : "—",
+                SteamGuardCode = _mobileAuthStore.GetCurrentCode(id) ?? "—",
+                HasPassword = _accountStore.Has(id),
+                HasMaFile = File.Exists(Path.Combine(_mobileAuthStore.MaFilesDirectory, $"{id}.maFile")),
+            };
+        }).ToList();
 
         InstancesList.ItemsSource = rows;
 
@@ -90,6 +133,82 @@ public partial class MainWindow : Window
         {
             InstancesList.SelectedItem = rows.FirstOrDefault(r => r.InstanceId == selectedInstanceId);
         }
+    }
+
+    private void OnImportLogPassClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Выбери файл с парами login:password (по одной на строку)",
+            Filter = "Текстовые файлы (*.txt)|*.txt|Все файлы (*.*)|*.*",
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            int imported = _accountStore.ImportFromLogPassFile(dialog.FileName);
+            MessageBox.Show(this, $"Импортировано аккаунтов: {imported}", "Импорт логин:пароль",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Не удалось импортировать", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        RefreshList();
+    }
+
+    private void OnImportMaFileClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Выбери один или несколько .maFile",
+            Filter = "Steam .maFile (*.maFile)|*.maFile|Все файлы (*.*)|*.*",
+            Multiselect = true,
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(_mobileAuthStore.MaFilesDirectory);
+
+        int imported = 0;
+        var errors = new List<string>();
+        foreach (string file in dialog.FileNames)
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<MobileAuthFile>(File.ReadAllText(file));
+                if (parsed is null || string.IsNullOrEmpty(parsed.AccountName))
+                {
+                    errors.Add($"{Path.GetFileName(file)}: нет account_name в файле");
+                    continue;
+                }
+
+                string dest = Path.Combine(_mobileAuthStore.MaFilesDirectory, $"{parsed.AccountName}.maFile");
+                File.Copy(file, dest, overwrite: true);
+                imported++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{Path.GetFileName(file)}: {ex.Message}");
+            }
+        }
+
+        string summary = $"Импортировано .maFile: {imported}";
+        if (errors.Count > 0)
+        {
+            summary += "\n\nОшибки:\n" + string.Join("\n", errors);
+        }
+
+        MessageBox.Show(this, summary, "Импорт .maFile", MessageBoxButton.OK, MessageBoxImage.Information);
+        RefreshList();
     }
 
     private void OnCopyCodeClicked(object sender, RoutedEventArgs e)

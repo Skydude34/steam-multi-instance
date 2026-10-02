@@ -8,6 +8,10 @@ public sealed class InstanceRow
     public required bool IsRunning { get; init; }
     public required string ProfileDirectory { get; init; }
     public string SteamGuardCode { get; init; } = "—";
+    public bool HasPassword { get; init; }
+    public bool HasMaFile { get; init; }
 
-    public string StatusText => IsRunning ? "работает" : "завершён";
+    public string StatusText => IsRunning ? "работает" : "не запущен";
+    public string PasswordStatus => HasPassword ? "есть" : "—";
+    public string MaFileStatus => HasMaFile ? "есть" : "—";
 }
