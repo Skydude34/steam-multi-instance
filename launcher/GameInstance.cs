@@ -1,37 +1,39 @@
-using System.Diagnostics;
-
 namespace SteamMultiInstance.Launcher;
 
-/// <summary>Один запущенный инстанс (конкретный профиль + процесс + Job Object).</summary>
-public sealed class GameInstance : IDisposable
+/// <summary>Один запущенный инстанс — это один Sandboxie-бокс с именем InstanceId.</summary>
+public sealed class GameInstance
 {
+    private readonly SandboxieController _sandbox;
+
     public string InstanceId { get; }
+    public string BoxName => InstanceId;
+
+    /// <summary>
+    /// Файловая песочница Sandboxie для этого бокса — стандартное
+    /// расположение по умолчанию (C:\Sandbox\&lt;пользователь&gt;\&lt;бокс&gt;).
+    /// Может отличаться, если в Sandboxie настроен нестандартный корень.
+    /// </summary>
     public string ProfileDirectory { get; }
-    public Process Process { get; }
-    public NativeJobObject Job { get; }
 
-    public int Pid => Process.HasExited ? -1 : Process.Id;
-    public bool IsRunning => !Process.HasExited;
-
-    public GameInstance(string instanceId, string profileDirectory, Process process, NativeJobObject job)
+    public GameInstance(string instanceId, string profileDirectory, SandboxieController sandbox)
     {
         InstanceId = instanceId;
         ProfileDirectory = profileDirectory;
-        Process = process;
-        Job = job;
+        _sandbox = sandbox;
     }
 
-    public void Kill()
+    /// <summary>PID первого найденного процесса в боксе, либо -1, если бокс пуст.</summary>
+    public int Pid
     {
-        // TerminateJobObject кладёт весь дерево процессов сразу — не нужно
-        // отдельно убивать дочерние процессы (например, саму игру, запущенную
-        // из-под Steam).
-        Job.KillAll();
+        get
+        {
+            int[] pids = _sandbox.ListPids(BoxName);
+            return pids.Length > 0 ? pids[0] : -1;
+        }
     }
 
-    public void Dispose()
-    {
-        Job.Dispose();
-        Process.Dispose();
-    }
+    public bool IsRunning => _sandbox.ListPids(BoxName).Length > 0;
+
+    /// <summary>Завершает все процессы в боксе этого инстанса разом.</summary>
+    public void Kill() => _sandbox.TerminateBox(BoxName);
 }

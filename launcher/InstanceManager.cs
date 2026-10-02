@@ -1,36 +1,37 @@
-using System.Diagnostics;
 using System.IO;
 
 namespace SteamMultiInstance.Launcher;
 
 /// <summary>
-/// Запускает инстансы через native-лончер (injector/smi_launcher.exe), который
-/// сам поднимает процесс suspended, инжектирует injector_hooks.dll и резюмирует.
-/// Эта обёртка отвечает за профиль (отдельная папка данных на инстанс) и за
-/// Job Object, в который попадает всё дерево процессов.
+/// Запускает инстансы через Sandboxie-Plus: каждый инстанс — отдельный
+/// "бокс" (изолированный namespace ядра + файловая песочница для всего
+/// дерева процессов), поэтому Steam не видит "уже запущенный" клиент
+/// другого инстанса и каждый получает свой чистый профиль автоматически —
+/// без DLL-инъекций и без хрупких хуков CreateMutexW/FindWindowW, которые
+/// использовались раньше (см. injector/, помечен как deprecated).
 /// </summary>
 public sealed class InstanceManager
 {
     private readonly Dictionary<string, GameInstance> _instances = new();
+    private readonly SandboxieController _sandbox = new();
 
-    /// <summary>Путь к smi_launcher.exe — собирается из CMake-проекта в injector/build.</summary>
-    public string NativeLauncherPath { get; set; } =
-        Path.Combine(AppContext.BaseDirectory, "smi_launcher.exe");
+    public string StartExePath
+    {
+        get => _sandbox.StartExePath;
+        set => _sandbox.StartExePath = value;
+    }
 
-    /// <summary>Корневая папка для профилей инстансов (отдельные Steam userdata/конфиги).</summary>
-    public string ProfilesRoot { get; set; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "SteamMultiInstance", "profiles");
+    public string SbieIniExePath
+    {
+        get => _sandbox.SbieIniExePath;
+        set => _sandbox.SbieIniExePath = value;
+    }
 
     public IReadOnlyCollection<GameInstance> Instances => _instances.Values;
 
     /// <summary>
-    /// Запускает новый инстанс targetExePath под именем instanceId.
-    /// ВАЖНО: это пока каркас — профиль steam-клиента (копия/junction папки
-    /// Steam с отдельным loginusers.vdf) нужно готовить отдельно, здесь лишь
-    /// создаётся папка под данные инстанса и пробрасывается переменная
-    /// SMI_PROFILE_DIR, которую может использовать сама цель или обёртка над
-    /// Steam (см. README, раздел "Разведение профилей").
+    /// Запускает новый инстанс targetExePath под именем instanceId — создаёт
+    /// (если ещё нет) Sandboxie-бокс с таким именем и запускает процесс в нём.
     /// </summary>
     public GameInstance Launch(string instanceId, string targetExePath, string[]? extraArgs = null)
     {
@@ -39,38 +40,18 @@ public sealed class InstanceManager
             throw new InvalidOperationException($"Инстанс \"{instanceId}\" уже запущен.");
         }
 
-        if (!File.Exists(NativeLauncherPath))
+        if (!File.Exists(_sandbox.StartExePath))
         {
             throw new FileNotFoundException(
-                "smi_launcher.exe не найден — сначала собери injector/ (см. README).",
-                NativeLauncherPath);
+                "Start.exe (Sandboxie-Plus) не найден — установи Sandboxie-Plus (см. README).",
+                _sandbox.StartExePath);
         }
 
-        string profileDir = Path.Combine(ProfilesRoot, instanceId);
-        Directory.CreateDirectory(profileDir);
+        _sandbox.LaunchInBox(instanceId, targetExePath, extraArgs);
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = NativeLauncherPath,
-            UseShellExecute = false,
-            CreateNoWindow = false,
-        };
-        startInfo.ArgumentList.Add(instanceId);
-        startInfo.ArgumentList.Add(targetExePath);
-        foreach (var arg in extraArgs ?? Array.Empty<string>())
-        {
-            startInfo.ArgumentList.Add(arg);
-        }
-        startInfo.EnvironmentVariables["SMI_INSTANCE_ID"] = instanceId;
-        startInfo.EnvironmentVariables["SMI_PROFILE_DIR"] = profileDir;
+        string profileDir = Path.Combine(@"C:\Sandbox", Environment.UserName, instanceId);
 
-        var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Process.Start вернул null.");
-
-        var job = new NativeJobObject($"SMI_{instanceId}_{process.Id}");
-        job.Assign(process.Handle);
-
-        var instance = new GameInstance(instanceId, profileDir, process, job);
+        var instance = new GameInstance(instanceId, profileDir, _sandbox);
         _instances[instanceId] = instance;
         return instance;
     }
@@ -80,7 +61,6 @@ public sealed class InstanceManager
         if (_instances.TryGetValue(instanceId, out var instance))
         {
             instance.Kill();
-            instance.Dispose();
             _instances.Remove(instanceId);
         }
     }
@@ -90,7 +70,6 @@ public sealed class InstanceManager
         foreach (var instance in _instances.Values)
         {
             instance.Kill();
-            instance.Dispose();
         }
         _instances.Clear();
     }

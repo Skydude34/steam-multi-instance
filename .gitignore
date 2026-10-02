@@ -15,6 +15,7 @@ launcher/obj/
 
 # vcpkg
 vcpkg_installed/
+/vcpkg/
 
 # IDE
 .vs/

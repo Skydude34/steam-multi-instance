@@ -21,59 +21,96 @@ Steam и многие игры при старте проверяют named mute
 
 ```
 steam-multi-instance/
-├── injector/          # C++: DLL с хуками + нативный лончер-инжектор
-│   ├── src/
-│   │   ├── dllmain.cpp     # хуки CreateMutexW/OpenMutexW/FindWindowW (MinHook)
-│   │   └── launcher.cpp    # CreateProcess(suspended) + ручная инъекция DLL + Resume
-│   └── CMakeLists.txt
+├── injector/          # DEPRECATED: C++ DLL-хуки (CreateMutexW/FindWindowW/
+│                       # RegisterClassW через MinHook) + ручная инъекция.
+│                       # Подход испытан на реальной машине (2026-10-02) и
+│                       # признан нерабочим для Steam — см. ниже "Почему не
+│                       # хуки". Код оставлен в репозитории для истории,
+│                       # больше не используется launcher'ом.
 └── launcher/          # C#/.NET WPF: GUI управления инстансами
+    ├── SandboxieController.cs  # обёртка над Start.exe/SbieIni.exe
+    ├── InstanceManager.cs      # инстанс = Sandboxie-бокс
     ├── MainWindow.xaml(.cs)
     └── SteamMultiInstance.Launcher.csproj
 ```
 
 ### Как это работает
 
-1. **Профили**: для каждого инстанса — отдельная копия/junction папки Steam
-   и свой каталог данных, чтобы конфиги/логины не пересекались.
-2. **Обход лока**: `injector.dll` инжектируется в процесс `steam.exe`
-   (и при необходимости в саму игру) до выполнения точки входа. Хуки на
-   `CreateMutexW`/`OpenMutexW` добавляют к имени мьютекса суффикс конкретного
-   инстанса, так что второй процесс не видит "чужой" мьютекс и не считает,
-   что уже запущен. Аналогичный хук на `FindWindowW`/`RegisterClassW` не даёт
-   второму инстансу найти/активировать окно первого вместо запуска.
-3. **GUI**: WPF-приложение со списком инстансов (профиль → PID → статус),
-   кнопки "Новый инстанс" / "Завершить всё". Каждый инстанс запускается в
-   своём Job Object, чтобы корректно завершать всё дерево процессов разом.
+Используем [Sandboxie-Plus](https://github.com/sandboxie-plus/Sandboxie)
+(открытый форк Sandboxie, GPL) как слой изоляции на уровне ядра:
+
+1. **Бокс на инстанс**: для каждого инстанса создаётся свой Sandboxie-бокс
+   (`SbieIni.exe set <id> Enabled y`). Драйвер Sandboxie виртуализирует
+   namespace именованных объектов ядра (мьютексы, пайпы, секции) и
+   файловую систему/реестр для **всего дерева процессов** внутри бокса —
+   включая `steamservice.exe`/`steamwebhelper.exe`, а не только для одного
+   процесса, который можно заинжектить вручную.
+2. **Запуск**: `Start.exe /box:<id> "steam.exe"` — Steam внутри бокса не
+   видит мьютекс/IPC другого запущенного инстанса и поднимается как первый
+   запуск.
+3. **Профили — бесплатно**: у каждого бокса своя файловая песочница
+   (`C:\Sandbox\<пользователь>\<id>\...`), поэтому `%LOCALAPPDATA%\Steam` и
+   конфиги разных инстансов physически не пересекаются — не нужно отдельно
+   копировать/разводить папки Steam.
+4. **GUI**: WPF-приложение со списком инстансов (ID → PID → статус),
+   кнопки "Новый инстанс" / "Завершить всё". `GameInstance.Pid`/`IsRunning`
+   читаются через `Start.exe /box:<id> /listpids`; `Kill` — через
+   `Start.exe /box:<id> /terminate` (убивает всё дерево процессов бокса
+   разом, аналог Job Object, но на уровне Sandboxie).
+
+### Почему не хуки (injector/)
+
+Первая версия (см. `injector/`) инжектировала DLL с хуками на
+`CreateMutexW`/`FindWindowW`/`RegisterClassW` в один процесс `steam.exe`.
+На реальном тесте (2026-10-02) выяснилось:
+
+- Переименование `RegisterClassW` ломало системные common-controls
+  классы (`Button`/`Edit`/`msctls_progress32`/...), которые Steam
+  использует для своего UI — клиент падал ещё до окна логина.
+- Даже после фикса этого краша, второй инстанс с другим именем убивал
+  первый: `Steam Client Service` — настоящий Windows-сервис, общий на всю
+  машину, а не просто мьютекс в клиентском процессе; координация
+  steam.exe↔steamservice идёт не через `CreateMutexW`/`FindWindowW`
+  (в логе диагностики их не было вообще), значит хуками эту часть было
+  не достать без знания точного механизма IPC.
+- Официальный флаг Steam `-master_ipc_name_override` тоже проверялся —
+  частично работает (два процесса `steam.exe` сосуществуют), но второй
+  экземпляр `steamwebhelper` не поднимает окно логина на текущих версиях
+  Steam (известная деградация/депрекейшн, см. issue
+  [DuoStream/Duo#217](https://github.com/DuoStream/Duo/issues/217)).
+
+Sandboxie решает это на уровень ниже (object manager ядра, не user-mode
+API хуки), поэтому работает сразу для всего дерева процессов.
 
 ### Статус MVP
 
-- [x] Структура проекта
-- [x] CreateProcess(suspended) + ручная инъекция DLL (`launcher.cpp`)
-- [x] Хуки на мьютекс/окно через MinHook (`dllmain.cpp`)
-- [x] WPF GUI: список инстансов, запуск/завершение, Job Object
+- [x] WPF GUI: список инстансов, запуск/завершение
+- [x] Изоляция через Sandboxie-Plus: бокс на инстанс, профили — автоматически
 - [x] Steam Guard код из `.maFile` (см. `launcher/SteamGuard/README.md`)
-- [ ] Разведение профилей Steam по отдельным папкам (копия/junction клиента)
-- [ ] Точные имена мьютекса/окна Steam и конкретной игры (сейчас хук грубо
-      переименовывает все named-объекты процесса — нужно сузить список)
-- [ ] Сборка и тест на реальной Windows-машине — код пока не компилировался
+- [x] Проверено на реальной машине: два инстанса Steam одновременно
+      доходят до окна логина, независимые профили, независимое завершение
+- [ ] Автоустановка/проверка наличия Sandboxie-Plus из самого GUI (сейчас
+      нужно поставить вручную: https://github.com/sandboxie-plus/Sandboxie)
+- [ ] `injector/` не удалён, но не используется — решить, оставлять ли в
+      репозитории дальше или убрать совсем
 
 ## Сборка
 
-**injector** (C++, нужен [vcpkg](https://github.com/microsoft/vcpkg) с
-пакетом `minhook`):
-
-```powershell
-cmake -S injector -B injector/build -DCMAKE_TOOLCHAIN_FILE=<путь-к-vcpkg>/scripts/buildsystems/vcpkg.cmake
-cmake --build injector/build --config Release
-```
-
-**launcher** (C#, .NET 8 SDK, Windows):
+**launcher** (C#, .NET 8 SDK, Windows) — единственное, что нужно собирать:
 
 ```powershell
 cd launcher
 dotnet build
 dotnet run
 ```
+
+Дополнительно нужен установленный [Sandboxie-Plus](https://github.com/sandboxie-plus/Sandboxie)
+(`winget install Sandboxie.Plus`) — лончер обращается к его
+`Start.exe`/`SbieIni.exe` по пути по умолчанию
+(`C:\Program Files\Sandboxie-Plus\`).
+
+`injector/` (C++, MinHook) можно не собирать — он deprecated и больше не
+вызывается лончером; оставлен в репозитории для истории эксперимента.
 
 ## Дисклеймер
 

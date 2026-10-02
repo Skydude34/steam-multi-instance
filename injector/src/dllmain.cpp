@@ -13,6 +13,7 @@
 #include <MinHook.h>
 #include <string>
 #include <cwchar>
+#include <cstdio>
 
 namespace {
 
@@ -26,6 +27,23 @@ decltype(&RegisterClassW) g_origRegisterClassW = nullptr;
 decltype(&RegisterClassExW) g_origRegisterClassExW = nullptr;
 
 std::wstring g_instanceSuffix;
+
+// DIAGNOSTIC: если задана переменная окружения SMI_LOG_ONLY=1, хуки не
+// переименовывают объекты (вызывают оригинал как есть), а только пишут в
+// лог-файл C:\steam\smi_hooks_<PID>.log каждое имя мьютекса/класса окна,
+// которое процесс создаёт/ищет при старте — чтобы найти точное имя,
+// отвечающее за single-instance detect, прежде чем сужать hook до whitelist.
+bool g_logOnly = false;
+
+void LogLine(const wchar_t* tag, const wchar_t* name) {
+    wchar_t path[MAX_PATH];
+    swprintf(path, MAX_PATH, L"C:\\steam\\smi_hooks_%lu.log", GetCurrentProcessId());
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path, L"a, ccs=UTF-8") == 0 && f) {
+        fwprintf(f, L"[%s] %s\n", tag, name ? name : L"(null)");
+        fclose(f);
+    }
+}
 
 // Возвращает true, если имя похоже на объект, который стоит переименовать.
 // TODO: заменить на конфигурируемый список точных имён для конкретных
@@ -41,24 +59,40 @@ std::wstring Suffixed(LPCWSTR name) {
 }
 
 HANDLE WINAPI HookedCreateMutexW(LPSECURITY_ATTRIBUTES attrs, BOOL initialOwner, LPCWSTR name) {
+    if (g_logOnly) {
+        LogLine(L"CreateMutexW", name);
+        return g_origCreateMutexW(attrs, initialOwner, name);
+    }
     if (!name) return g_origCreateMutexW(attrs, initialOwner, name);
     std::wstring renamed = Suffixed(name);
     return g_origCreateMutexW(attrs, initialOwner, renamed.c_str());
 }
 
 HANDLE WINAPI HookedOpenMutexW(DWORD desiredAccess, BOOL inheritHandle, LPCWSTR name) {
+    if (g_logOnly) {
+        LogLine(L"OpenMutexW", name);
+        return g_origOpenMutexW(desiredAccess, inheritHandle, name);
+    }
     if (!name) return g_origOpenMutexW(desiredAccess, inheritHandle, name);
     std::wstring renamed = Suffixed(name);
     return g_origOpenMutexW(desiredAccess, inheritHandle, renamed.c_str());
 }
 
 HANDLE WINAPI HookedCreateMutexExW(LPSECURITY_ATTRIBUTES attrs, LPCWSTR name, DWORD flags, DWORD desiredAccess) {
+    if (g_logOnly) {
+        LogLine(L"CreateMutexExW", name);
+        return g_origCreateMutexExW(attrs, name, flags, desiredAccess);
+    }
     if (!name) return g_origCreateMutexExW(attrs, name, flags, desiredAccess);
     std::wstring renamed = Suffixed(name);
     return g_origCreateMutexExW(attrs, renamed.c_str(), flags, desiredAccess);
 }
 
 HWND WINAPI HookedFindWindowW(LPCWSTR className, LPCWSTR windowName) {
+    if (g_logOnly) {
+        LogLine(L"FindWindowW", className);
+        return g_origFindWindowW(className, windowName);
+    }
     // Второй инстанс не должен находить окно первого по оригинальному имени
     // класса — это именно та проверка, через которую приложение решает
     // "активировать существующее окно вместо запуска нового".
@@ -67,11 +101,19 @@ HWND WINAPI HookedFindWindowW(LPCWSTR className, LPCWSTR windowName) {
 }
 
 HWND WINAPI HookedFindWindowExW(HWND parent, HWND childAfter, LPCWSTR className, LPCWSTR windowName) {
+    if (g_logOnly) {
+        LogLine(L"FindWindowExW", className);
+        return g_origFindWindowExW(parent, childAfter, className, windowName);
+    }
     std::wstring renamedClass = className ? Suffixed(className) : std::wstring();
     return g_origFindWindowExW(parent, childAfter, className ? renamedClass.c_str() : nullptr, windowName);
 }
 
 ATOM WINAPI HookedRegisterClassW(const WNDCLASSW* wndClass) {
+    if (g_logOnly) {
+        LogLine(L"RegisterClassW", wndClass ? wndClass->lpszClassName : nullptr);
+        return g_origRegisterClassW(wndClass);
+    }
     if (!wndClass || !wndClass->lpszClassName) return g_origRegisterClassW(wndClass);
     WNDCLASSW copy = *wndClass;
     std::wstring renamed = Suffixed(wndClass->lpszClassName);
@@ -80,6 +122,10 @@ ATOM WINAPI HookedRegisterClassW(const WNDCLASSW* wndClass) {
 }
 
 ATOM WINAPI HookedRegisterClassExW(const WNDCLASSEXW* wndClass) {
+    if (g_logOnly) {
+        LogLine(L"RegisterClassExW", wndClass ? wndClass->lpszClassName : nullptr);
+        return g_origRegisterClassExW(wndClass);
+    }
     if (!wndClass || !wndClass->lpszClassName) return g_origRegisterClassExW(wndClass);
     WNDCLASSEXW copy = *wndClass;
     std::wstring renamed = Suffixed(wndClass->lpszClassName);
@@ -98,6 +144,10 @@ void InstallHooks() {
     DWORD len = GetEnvironmentVariableW(L"SMI_INSTANCE_ID", buf, 64);
     g_instanceSuffix = (len > 0) ? std::wstring(buf) : L"smi0";
 
+    wchar_t logOnlyBuf[8] = {};
+    g_logOnly = GetEnvironmentVariableW(L"SMI_LOG_ONLY", logOnlyBuf, 8) > 0
+        && wcscmp(logOnlyBuf, L"1") == 0;
+
     if (MH_Initialize() != MH_OK) return;
 
     CreateAndEnableHook(&CreateMutexW, &HookedCreateMutexW, &g_origCreateMutexW);
@@ -105,8 +155,13 @@ void InstallHooks() {
     CreateAndEnableHook(&CreateMutexExW, &HookedCreateMutexExW, &g_origCreateMutexExW);
     CreateAndEnableHook(&FindWindowW, &HookedFindWindowW, &g_origFindWindowW);
     CreateAndEnableHook(&FindWindowExW, &HookedFindWindowExW, &g_origFindWindowExW);
-    CreateAndEnableHook(&RegisterClassW, &HookedRegisterClassW, &g_origRegisterClassW);
-    CreateAndEnableHook(&RegisterClassExW, &HookedRegisterClassExW, &g_origRegisterClassExW);
+    // RegisterClassW/Ex НЕ хукаем: лог (SMI_LOG_ONLY=1, 2026-10-02) на реальном
+    // steam.exe показал, что здесь регистрируются только системные общие
+    // классы контролов (Button/Static/Edit/msctls_progress32/...) для
+    // собственного UI бутстраппера (BootstrapUpdateUIClass) — переименование
+    // ломает сопоставление с последующими CreateWindowW(<исходное имя>) и
+    // валит процесс ещё до окна логина. Ни одного Steam-специфичного имени
+    // класса, похожего на single-instance detect, в логе не было.
 }
 
 void RemoveHooks() {
