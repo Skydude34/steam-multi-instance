@@ -1,9 +1,10 @@
 <Window x:Class="SteamMultiInstance.Launcher.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Steam Multi-Instance Launcher" Height="420" Width="640">
+        Title="Steam Multi-Instance Launcher" Height="480" Width="680">
     <Grid Margin="12">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
@@ -31,19 +32,44 @@
             </Grid>
         </GroupBox>
 
-        <ListView x:Name="InstancesList" Grid.Row="1">
+        <GroupBox Header="Учётные данные инстанса (хранятся только локально, зашифрованы)" Grid.Row="1" Margin="0,0,0,10">
+            <Grid Margin="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="160"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Text="Логин Steam:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBox x:Name="CredentialLoginBox" Grid.Column="1" Margin="0,0,10,0"/>
+
+                <TextBlock Text="Пароль:" Grid.Column="2" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <PasswordBox x:Name="CredentialPasswordBox" Grid.Column="3" Margin="0,0,10,0"/>
+
+                <Button x:Name="SaveCredentialButton" Grid.Column="4" Content="Сохранить для выбранного инстанса"
+                        Click="OnSaveCredentialClicked" Padding="10,2" Margin="0,0,8,0"/>
+                <Button x:Name="LoginButton" Grid.Column="5" Content="Войти автоматически"
+                        Click="OnAutoLoginClicked" Padding="10,2"/>
+            </Grid>
+        </GroupBox>
+
+        <ListView x:Name="InstancesList" Grid.Row="2">
             <ListView.View>
                 <GridView>
                     <GridViewColumn Header="ID" DisplayMemberBinding="{Binding InstanceId}" Width="100"/>
                     <GridViewColumn Header="PID" DisplayMemberBinding="{Binding Pid}" Width="80"/>
                     <GridViewColumn Header="Статус" DisplayMemberBinding="{Binding StatusText}" Width="100"/>
                     <GridViewColumn Header="Steam Guard" DisplayMemberBinding="{Binding SteamGuardCode}" Width="90"/>
-                    <GridViewColumn Header="Профиль" DisplayMemberBinding="{Binding ProfileDirectory}" Width="190"/>
+                    <GridViewColumn Header="Учётные данные" DisplayMemberBinding="{Binding CredentialStatus}" Width="100"/>
+                    <GridViewColumn Header="Профиль" DisplayMemberBinding="{Binding ProfileDirectory}" Width="170"/>
                 </GridView>
             </ListView.View>
         </ListView>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <Button x:Name="RefreshButton" Content="Обновить" Click="OnRefreshClicked" Padding="10,4" Margin="0,0,8,0"/>
             <Button x:Name="CopyCodeButton" Content="Скопировать Steam Guard код" Click="OnCopyCodeClicked" Padding="10,4" Margin="0,0,8,0"/>
             <Button x:Name="KillSelectedButton" Content="Завершить выбранный" Click="OnKillSelectedClicked" Padding="10,4" Margin="0,0,8,0"/>

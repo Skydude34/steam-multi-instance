@@ -8,6 +8,7 @@ public partial class MainWindow : Window
 {
     private readonly InstanceManager _manager = new();
     private readonly MobileAuthStore _mobileAuthStore = new();
+    private readonly CredentialStore _credentialStore = new();
     private readonly DispatcherTimer _codeRefreshTimer;
 
     public MainWindow()
@@ -81,6 +82,7 @@ public partial class MainWindow : Window
                 IsRunning = i.IsRunning,
                 ProfileDirectory = i.ProfileDirectory,
                 SteamGuardCode = _mobileAuthStore.GetCurrentCode(i.InstanceId) ?? "—",
+                HasCredentials = _credentialStore.Has(i.InstanceId),
             })
             .ToList();
 
@@ -109,5 +111,90 @@ public partial class MainWindow : Window
         }
 
         Clipboard.SetText(code);
+    }
+
+    private void OnSaveCredentialClicked(object sender, RoutedEventArgs e)
+    {
+        if (InstancesList.SelectedItem is not InstanceRow row)
+        {
+            MessageBox.Show(this, "Сначала выбери инстанс в списке.", "Steam Multi-Instance",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        string login = CredentialLoginBox.Text.Trim();
+        string password = CredentialPasswordBox.Password;
+
+        if (string.IsNullOrEmpty(login) || string.IsNullOrEmpty(password))
+        {
+            MessageBox.Show(this, "Укажи логин и пароль.", "Steam Multi-Instance",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // Сохраняем локально (зашифровано DPAPI) и сразу чистим поле пароля
+        // из UI — оно больше не нужно в памяти формы после записи на диск.
+        _credentialStore.Save(row.InstanceId, login, password);
+        CredentialPasswordBox.Clear();
+
+        RefreshList();
+    }
+
+    private async void OnAutoLoginClicked(object sender, RoutedEventArgs e)
+    {
+        if (InstancesList.SelectedItem is not InstanceRow row)
+        {
+            MessageBox.Show(this, "Сначала выбери инстанс в списке.", "Steam Multi-Instance",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (!_credentialStore.TryLoad(row.InstanceId, out string login, out string password))
+        {
+            MessageBox.Show(this,
+                $"Для инстанса \"{row.InstanceId}\" не сохранены учётные данные — сначала заполни логин/пароль и нажми \"Сохранить\".",
+                "Steam Multi-Instance", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (row.Pid <= 0)
+        {
+            MessageBox.Show(this, "Инстанс не запущен — сначала нажми \"Запустить\".", "Steam Multi-Instance",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        int pid = row.Pid;
+        string instanceId = row.InstanceId;
+
+        LoginButton.IsEnabled = false;
+        try
+        {
+            bool loggedIn = await Task.Run(() => SteamLoginAutomator.TryLogin(pid, login, password));
+            if (!loggedIn)
+            {
+                MessageBox.Show(this, "Не нашёл окно входа Steam в отведённое время — попробуй ещё раз или введи данные вручную.",
+                    "Автологин", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Код Steam Guard вводим отдельным шагом — окно запроса кода
+            // появляется только после того, как Steam принял пароль.
+            string? code = _mobileAuthStore.GetCurrentCode(instanceId);
+            if (code is not null)
+            {
+                bool codeEntered = await Task.Run(() => SteamLoginAutomator.TryEnterGuardCode(pid, code));
+                if (!codeEntered)
+                {
+                    MessageBox.Show(this,
+                        "Пароль введён, но не нашёл окно запроса кода Steam Guard (или .maFile не нужен для этого аккаунта) — проверь вручную.",
+                        "Автологин", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+        }
+        finally
+        {
+            LoginButton.IsEnabled = true;
+        }
     }
 }
