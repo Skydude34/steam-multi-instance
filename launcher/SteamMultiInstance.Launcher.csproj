@@ -10,11 +10,4 @@
     <AssemblyName>SteamMultiInstance.Launcher</AssemblyName>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- UI Automation для автологина (находит поля логина/пароля в окне
-         Steam по их Automation-дереву, а не по хрупким координатам/хукам). -->
-    <PackageReference Include="FlaUI.Core" Version="4.0.0" />
-    <PackageReference Include="FlaUI.UIA3" Version="4.0.0" />
-  </ItemGroup>
-
 </Project>

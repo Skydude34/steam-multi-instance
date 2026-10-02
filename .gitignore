@@ -25,7 +25,3 @@ vcpkg_installed/
 # Steam Guard — секреты уровня пароля, никогда не коммитить
 *.maFile
 mafiles/
-
-# Логины/пароли (зашифрованы DPAPI, но всё равно не в репозитории)
-*.cred
-credentials/
