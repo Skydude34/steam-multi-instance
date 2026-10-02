@@ -37,13 +37,15 @@
                     <GridViewColumn Header="ID" DisplayMemberBinding="{Binding InstanceId}" Width="100"/>
                     <GridViewColumn Header="PID" DisplayMemberBinding="{Binding Pid}" Width="80"/>
                     <GridViewColumn Header="Статус" DisplayMemberBinding="{Binding StatusText}" Width="100"/>
-                    <GridViewColumn Header="Профиль" DisplayMemberBinding="{Binding ProfileDirectory}" Width="280"/>
+                    <GridViewColumn Header="Steam Guard" DisplayMemberBinding="{Binding SteamGuardCode}" Width="90"/>
+                    <GridViewColumn Header="Профиль" DisplayMemberBinding="{Binding ProfileDirectory}" Width="190"/>
                 </GridView>
             </ListView.View>
         </ListView>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
             <Button x:Name="RefreshButton" Content="Обновить" Click="OnRefreshClicked" Padding="10,4" Margin="0,0,8,0"/>
+            <Button x:Name="CopyCodeButton" Content="Скопировать Steam Guard код" Click="OnCopyCodeClicked" Padding="10,4" Margin="0,0,8,0"/>
             <Button x:Name="KillSelectedButton" Content="Завершить выбранный" Click="OnKillSelectedClicked" Padding="10,4" Margin="0,0,8,0"/>
             <Button x:Name="KillAllButton" Content="Завершить всё" Click="OnKillAllClicked" Padding="10,4"/>
         </StackPanel>

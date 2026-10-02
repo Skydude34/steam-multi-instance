@@ -48,10 +48,14 @@ steam-multi-instance/
 ### Статус MVP
 
 - [x] Структура проекта
-- [ ] CreateProcess(suspended) + ручная инъекция DLL (`launcher.cpp`)
-- [ ] Хуки на мьютекс/окно через MinHook (`dllmain.cpp`)
-- [ ] Разведение профилей Steam по отдельным папкам
-- [ ] WPF GUI: список инстансов, запуск/завершение, Job Object
+- [x] CreateProcess(suspended) + ручная инъекция DLL (`launcher.cpp`)
+- [x] Хуки на мьютекс/окно через MinHook (`dllmain.cpp`)
+- [x] WPF GUI: список инстансов, запуск/завершение, Job Object
+- [x] Steam Guard код из `.maFile` (см. `launcher/SteamGuard/README.md`)
+- [ ] Разведение профилей Steam по отдельным папкам (копия/junction клиента)
+- [ ] Точные имена мьютекса/окна Steam и конкретной игры (сейчас хук грубо
+      переименовывает все named-объекты процесса — нужно сузить список)
+- [ ] Сборка и тест на реальной Windows-машине — код пока не компилировался
 
 ## Сборка
 

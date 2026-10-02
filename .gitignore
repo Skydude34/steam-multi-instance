@@ -20,3 +20,7 @@ vcpkg_installed/
 .vs/
 .vscode/
 *.suo
+
+# Steam Guard — секреты уровня пароля, никогда не коммитить
+*.maFile
+mafiles/

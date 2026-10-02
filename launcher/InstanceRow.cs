@@ -7,6 +7,7 @@ public sealed class InstanceRow
     public required int Pid { get; init; }
     public required bool IsRunning { get; init; }
     public required string ProfileDirectory { get; init; }
+    public string SteamGuardCode { get; init; } = "—";
 
     public string StatusText => IsRunning ? "работает" : "завершён";
 }
